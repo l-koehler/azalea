@@ -6,7 +6,10 @@ use azalea_core::{
     direction::Direction,
     position::{BlockPos, Vec3},
 };
-use azalea_entity::{HasClientLoaded, LocalEntity, Physics, Position};
+use azalea_entity::{
+    FluidOnEyes, HasClientLoaded, LocalEntity, Physics, PlayerAbilities, Position,
+    metadata::{Sprinting, Swimming},
+};
 use azalea_registry::builtin::BlockKind;
 use azalea_world::{World, WorldName, Worlds};
 use bevy_ecs::prelude::*;
@@ -175,8 +178,57 @@ fn update_fluid_height_and_do_fluid_pushing(
     touching_fluid
 }
 
-pub fn update_swimming() {
-    // TODO: swimming
+// Entity.updateSwimming
+#[allow(clippy::type_complexity)]
+pub fn update_swimming(
+    mut query: Query<
+        (
+            &mut Swimming,
+            &Sprinting,
+            &FluidOnEyes,
+            &Physics,
+            &Position,
+            &WorldName,
+            Option<&PlayerAbilities>,
+        ),
+        (With<LocalEntity>, With<HasClientLoaded>),
+    >,
+    worlds: Res<Worlds>,
+) {
+    for (mut swimming, sprinting, fluid_on_eyes, physics, position, world_name, abilities) in
+        &mut query
+    {
+        let Some(world_lock) = worlds.get(world_name) else {
+            continue;
+        };
+        let world = world_lock.read();
+
+        // TODO: passengers
+        let is_passenger = false;
+
+        // Player.updateSwimming
+        let is_flying = abilities.is_some_and(|abilities| abilities.flying);
+
+        let new_swimming = if is_flying {
+            false
+        } else if **swimming {
+            **sprinting && physics.is_in_water() && !is_passenger
+        } else {
+            // Entity.isUnderWater
+            let is_underwater = **fluid_on_eyes == FluidKind::Water && physics.is_in_water();
+            **sprinting
+                && is_underwater
+                && !is_passenger
+                && world
+                    .get_fluid_state(BlockPos::from(*position))
+                    .is_some_and(|fluid| fluid.kind == FluidKind::Water)
+        };
+
+        // avoid triggering change detection
+        if **swimming != new_swimming {
+            **swimming = new_swimming;
+        }
+    }
 }
 
 // FlowingFluid.getFlow

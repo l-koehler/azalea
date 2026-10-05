@@ -1,3 +1,4 @@
+use azalea_block::fluid_state::FluidKind;
 use azalea_core::{
     entity_id::MinecraftEntityId,
     game_type::GameMode,
@@ -5,9 +6,9 @@ use azalea_core::{
     tick::GameTick,
 };
 use azalea_entity::{
-    ActiveEffects, Attributes, Crouching, EntityGeometryUpdateSystems, HasClientLoaded, Jumping,
-    LastSentPosition, LocalEntity, LookDirection, OnClimbable, Physics, PlayerAbilities, Pose,
-    Position,
+    ActiveEffects, Attributes, Crouching, EntityGeometryUpdateSystems, FluidOnEyes,
+    HasClientLoaded, Jumping, LastSentPosition, LocalEntity, LookDirection, OnClimbable, Physics,
+    PlayerAbilities, Pose, Position,
     dimensions::calculate_dimensions,
     inventory::Inventory,
     metadata::{self, FallFlying, Sprinting},
@@ -314,7 +315,8 @@ pub fn local_player_ai_step(
             Option<&Hunger>,
             Option<&LastSentInput>,
             &FallFlying,
-            &Pose,
+            // grouped to stay under bevy's 15-element limit for query tuples
+            (&Pose, &FluidOnEyes),
             &mut Physics,
             &mut Sprinting,
             &mut Crouching,
@@ -336,7 +338,7 @@ pub fn local_player_ai_step(
         hunger,
         last_sent_input,
         fall_flying,
-        pose,
+        (pose, fluid_on_eyes),
         mut physics,
         mut sprinting,
         mut crouching,
@@ -380,8 +382,8 @@ pub fn local_player_ai_step(
 
         let trying_to_sprint = physics_state.trying_to_sprint;
 
-        // TODO: swimming
-        let is_underwater = false;
+        // Entity.isUnderWater
+        let is_underwater = physics.is_in_water() && **fluid_on_eyes == FluidKind::Water;
         let is_in_water = physics.is_in_water();
 
         let is_fall_flying = **fall_flying;
@@ -409,16 +411,32 @@ pub fn local_player_ai_step(
         }
 
         if **sprinting {
-            // TODO: swimming
-
+            // TODO: passengers
             let vehicle_can_sprint = false;
-            // shouldStopRunSprinting
-            let should_stop_sprinting = has_blindness
-                || (is_passenger && !vehicle_can_sprint)
-                || !has_enough_impulse
-                || !has_enough_food_to_sprint
-                || (physics.horizontal_collision && !physics.minor_horizontal_collision)
-                || (is_in_water && !is_underwater);
+            // Entity.isInShallowWater
+            let is_in_shallow_water = is_in_water && !is_underwater;
+            // LocalPlayer.isSprintingPossible
+            let is_sprinting_possible = |allowed_in_shallow_water: bool| {
+                !has_blindness
+                    && if is_passenger {
+                        vehicle_can_sprint
+                    } else {
+                        has_enough_food_to_sprint
+                    }
+                    && (allowed_in_shallow_water || !is_in_shallow_water)
+            };
+
+            let should_stop_sprinting = if **swimming {
+                // shouldStopSwimSprinting
+                !is_sprinting_possible(true)
+                    || !is_in_water
+                    || (!has_enough_impulse && !physics.on_ground() && !physics_state.trying_to_crouch)
+            } else {
+                // shouldStopRunSprinting
+                !is_sprinting_possible(abilities.flying)
+                    || !has_enough_impulse
+                    || (physics.horizontal_collision && !physics.minor_horizontal_collision)
+            };
             if should_stop_sprinting {
                 set_sprinting(false, &mut sprinting, &mut attributes);
             }
@@ -729,6 +747,7 @@ pub fn update_pose(
         &Physics,
         &ClientMovementState,
         &FallFlying,
+        &metadata::Swimming,
         &GameMode,
         &WorldHolder,
         &Position,
@@ -742,6 +761,7 @@ pub fn update_pose(
         physics,
         physics_state,
         fall_flying,
+        swimming,
         &game_mode,
         world_holder,
         position,
@@ -762,9 +782,10 @@ pub fn update_pose(
             continue;
         }
 
-        // TODO: implement everything else from getDesiredPose: sleeping, swimming,
-        // fallFlying, spinAttack
-        let desired_pose = if physics_state.trying_to_crouch {
+        // TODO: implement everything else from getDesiredPose: sleeping, spinAttack
+        let desired_pose = if **swimming {
+            Pose::Swimming
+        } else if physics_state.trying_to_crouch {
             Pose::Crouching
         } else if **fall_flying {
             Pose::FallFlying

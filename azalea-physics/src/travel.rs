@@ -1,4 +1,7 @@
-use azalea_block::{BlockState, fluid_state::FluidState};
+use azalea_block::{
+    BlockState,
+    fluid_state::{FluidKind, FluidState},
+};
 use azalea_core::{
     aabb::Aabb,
     position::{BlockPos, Vec3},
@@ -6,7 +9,7 @@ use azalea_core::{
 use azalea_entity::{
     Attributes, HasClientLoaded, Jumping, LocalEntity, LookDirection, OnClimbable, Physics,
     PlayerAbilities, Pose, Position,
-    metadata::{FallFlying, Sprinting},
+    metadata::{FallFlying, Sprinting, Swimming},
     move_relative, view_vector,
 };
 use azalea_world::{World, WorldName, Worlds};
@@ -37,6 +40,7 @@ pub fn travel(
             Option<&ClientMovementState>,
             Option<&Sprinting>,
             Option<&Pose>,
+            Option<&Swimming>,
             Option<&PlayerAbilities>,
             &mut Physics,
             &mut LookDirection,
@@ -58,6 +62,7 @@ pub fn travel(
         physics_state,
         sprinting,
         pose,
+        swimming,
         abilities,
         mut physics,
         direction,
@@ -90,6 +95,11 @@ pub fn travel(
             jumping: *jumping,
         };
 
+        if swimming.is_some_and(|swimming| **swimming) {
+            // TODO: passengers
+            swim_towards_look_direction(&mut ctx);
+        }
+
         if ctx.physics.is_in_water() || ctx.physics.is_in_lava() {
             // minecraft also checks for `this.isAffectedByFluids() &&
             // !this.canStandOnFluid(fluidAtBlock)` here but it doesn't matter
@@ -103,6 +113,24 @@ pub fn travel(
         } else {
             travel_in_air(&mut ctx);
         }
+    }
+}
+
+/// Makes a swimming player dive or surface depending on where they look.
+///
+/// In Mojmap, this is part of `Player.travel`.
+fn swim_towards_look_direction(ctx: &mut MoveCtx) {
+    let look_y = view_vector(ctx.direction).y;
+    let scale = if look_y < -0.2 { 0.085 } else { 0.06 };
+
+    let pos_above_feet = BlockPos::from(ctx.position.up(1. - 0.1));
+    let fluid_above_feet = ctx
+        .world
+        .get_fluid_state(pos_above_feet)
+        .is_some_and(|fluid| fluid.kind != FluidKind::Empty);
+
+    if look_y <= 0. || *ctx.jumping || fluid_above_feet {
+        ctx.physics.velocity.y += (look_y - ctx.physics.velocity.y) * scale;
     }
 }
 

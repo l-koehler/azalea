@@ -44,7 +44,7 @@ impl Plugin for PhysicsPlugin {
             (
                 fluids::update_in_water_state_and_do_fluid_pushing,
                 update_old_position,
-                fluids::update_swimming,
+                fluids::update_swimming.after(azalea_entity::update_fluid_on_eyes),
                 ai_step,
                 travel::travel,
                 apply_effects_from_blocks,
